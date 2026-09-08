@@ -1,0 +1,74 @@
+# ansi-html-bridge
+
+Terminal programs color their output with ANSI SGR escape sequences
+(`\x1b[31m`, `\x1b[1;38;5;208m`, and so on). That's fine as long as the
+output stays in a terminal, but the moment you want to show a build log,
+a test failure, or a REPL session on a web page, those bytes are either
+stripped out (losing all the color) or dumped raw (showing garbage
+characters). This library converts between the two: parse ANSI-colored
+text into a plain data structure, then render that structure as HTML.
+
+The parsing step and the rendering step are both pure functions with no
+shared state, so a colored log line goes in and a `<span>`-wrapped HTML
+string comes out, with nothing in between that depends on program state,
+time, or the filesystem.
+
+## Usage
+
+```go
+package main
+
+import (
+	"fmt"
+
+	ansihtml "github.com/lmmartinez9/ansi-html-bridge"
+)
+
+func main() {
+	// A line a build tool might print: bold red "FAIL", then plain text.
+	line := "\x1b[1;31mFAIL\x1b[0m internal/parser (0.4s)"
+
+	spans := ansihtml.Decode(line)
+	fmt.Println(ansihtml.ToHTML(spans))
+	// <span style="font-weight:bold;color:#800000">FAIL</span> internal/parser (0.4s)
+
+	// Spans can also be turned back into an ANSI string, e.g. after
+	// filtering or re-coloring them in code.
+	fmt.Println(ansihtml.Encode(spans) == line) // true (same styling, re-encoded)
+}
+```
+
+`Decode` understands:
+
+- text attributes: bold, faint, italic, underline, blink, reverse,
+  strikethrough, and their "off" codes
+- the 8 standard and 8 bright colors (SGR 30-37, 40-47, 90-97, 100-107)
+- 256-color palette codes (`38;5;N` / `48;5;N`)
+- 24-bit truecolor codes (`38;2;R;G;B` / `48;2;R;G;B`)
+- reset (SGR 0)
+
+Non-SGR control sequences (cursor movement, screen clearing, and similar)
+are recognized and dropped rather than leaking into the output text,
+since the `Span` representation has nowhere to put them.
+
+## Why a `Span` in the middle
+
+`Decode` and `ToHTML`/`Encode` never talk to each other directly. Every
+public function takes plain values and returns plain values:
+
+```go
+func Decode(input string) []Span
+func Encode(spans []Span) string
+func ToHTML(spans []Span) string
+```
+
+That makes each one trivial to unit test in isolation (see
+`ansi_test.go`), and it means adding a third output format later - say,
+Markdown code fences with a color legend, or a JSON export - only
+requires a new `func([]Span) string`, not changes to the parser.
+
+## Status
+
+Early skeleton. The SGR/256-color/truecolor decoding and the HTML
+renderer work and are tested; see the roadmap below for what's not built
+yet.
