@@ -60,7 +60,16 @@ public function takes plain values and returns plain values:
 func Decode(input string) []Span
 func Encode(spans []Span) string
 func ToHTML(spans []Span) string
+func HTMLToSpans(input string) []Span
 ```
+
+`HTMLToSpans` is the inverse of `ToHTML`, so a colored ANSI line can go
+in, come out as HTML, and be parsed back into spans - useful if you store
+the HTML and later want to re-render it as ANSI with `Encode`, or filter
+it by style. It only understands the shape `ToHTML` itself produces
+(bare text, `<br>` line breaks, `<span style="...">` runs), not arbitrary
+HTML, and it collapses every color to 24-bit RGB, since CSS has no
+concept of the basic/256/truecolor distinction ANSI makes.
 
 That makes each one trivial to unit test in isolation (see
 `ansi_test.go`), and it means adding a third output format later - say,
@@ -69,6 +78,7 @@ requires a new `func([]Span) string`, not changes to the parser.
 
 ## Status
 
-Early skeleton. The SGR/256-color/truecolor decoding and the HTML
-renderer work and are tested; see the roadmap below for what's not built
-yet.
+Early skeleton. Decoding, HTML rendering, and parsing HTML back into
+spans all work and are tested. `Encode` wraps every span independently
+rather than emitting minimal diff-based SGR codes between spans, and
+there's no CLI wrapper yet.
