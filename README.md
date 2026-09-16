@@ -78,7 +78,7 @@ requires a new `func([]Span) string`, not changes to the parser.
 
 ## Status
 
-Early skeleton. Decoding, HTML rendering, and parsing HTML back into
-spans all work and are tested. `Encode` wraps every span independently
-rather than emitting minimal diff-based SGR codes between spans, and
-there's no CLI wrapper yet.
+Early skeleton. Decoding, HTML rendering, parsing HTML back into spans,
+and encoding spans back to ANSI (as a minimal diff against the previous
+span's style, not a full reset-and-restyle every time) all work and are
+tested. There's no CLI wrapper yet.

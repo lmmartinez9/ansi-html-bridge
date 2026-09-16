@@ -205,53 +205,95 @@ func splitParams(params string) []int {
 	return codes
 }
 
-// Encode renders spans back into a string with ANSI SGR escape sequences.
-// Each span is wrapped independently (full style, then a trailing reset)
-// rather than emitting a minimal diff against the previous span's style;
-// the output is correct but more verbose than a hand-written sequence.
+// Encode renders spans back into a string with ANSI SGR escape sequences,
+// emitting only the codes needed to move from the previous span's style to
+// the next one rather than the full style before every span. This mirrors
+// how tools that write ANSI by hand behave (they turn off what changed, not
+// everything), and keeps output short for logs with many short-lived spans.
 func Encode(spans []Span) string {
 	var b strings.Builder
+	prev := Style{}
 	for _, span := range spans {
-		codes := sgrCodes(span.Style)
+		codes := diffSGR(prev, span.Style)
 		if len(codes) > 0 {
 			b.WriteString("\x1b[")
 			b.WriteString(strings.Join(codes, ";"))
 			b.WriteString("m")
 		}
 		b.WriteString(span.Text)
-		if len(codes) > 0 {
-			b.WriteString("\x1b[0m")
-		}
+		prev = span.Style
+	}
+	if prev != (Style{}) {
+		b.WriteString("\x1b[0m")
 	}
 	return b.String()
 }
 
-func sgrCodes(s Style) []string {
+// diffSGR returns the SGR codes that take the terminal from prev's style to
+// next's. Bold and faint are handled together because they share a single
+// "off" code (22, per applySGR): turning off just one of the two while the
+// other stays on means turning both off and then re-asserting whichever one
+// is still set.
+func diffSGR(prev, next Style) []string {
 	var codes []string
-	if s.Bold {
-		codes = append(codes, "1")
+
+	switch {
+	case prev.Bold == next.Bold && prev.Faint == next.Faint:
+		// no change
+	case !next.Bold && !next.Faint:
+		codes = append(codes, "22")
+	case (prev.Bold && !next.Bold) || (prev.Faint && !next.Faint):
+		codes = append(codes, "22")
+		if next.Bold {
+			codes = append(codes, "1")
+		}
+		if next.Faint {
+			codes = append(codes, "2")
+		}
+	default:
+		if next.Bold && !prev.Bold {
+			codes = append(codes, "1")
+		}
+		if next.Faint && !prev.Faint {
+			codes = append(codes, "2")
+		}
 	}
-	if s.Faint {
-		codes = append(codes, "2")
+
+	codes = append(codes, boolDiff(prev.Italic, next.Italic, "3", "23")...)
+	codes = append(codes, boolDiff(prev.Underline, next.Underline, "4", "24")...)
+	codes = append(codes, boolDiff(prev.Blink, next.Blink, "5", "25")...)
+	codes = append(codes, boolDiff(prev.Reverse, next.Reverse, "7", "27")...)
+	codes = append(codes, boolDiff(prev.Strikethrough, next.Strikethrough, "9", "29")...)
+
+	if next.Foreground != prev.Foreground {
+		if next.Foreground.Mode == ColorNone {
+			codes = append(codes, "39")
+		} else {
+			codes = append(codes, colorCodes(next.Foreground, true)...)
+		}
 	}
-	if s.Italic {
-		codes = append(codes, "3")
+	if next.Background != prev.Background {
+		if next.Background.Mode == ColorNone {
+			codes = append(codes, "49")
+		} else {
+			codes = append(codes, colorCodes(next.Background, false)...)
+		}
 	}
-	if s.Underline {
-		codes = append(codes, "4")
-	}
-	if s.Blink {
-		codes = append(codes, "5")
-	}
-	if s.Reverse {
-		codes = append(codes, "7")
-	}
-	if s.Strikethrough {
-		codes = append(codes, "9")
-	}
-	codes = append(codes, colorCodes(s.Foreground, true)...)
-	codes = append(codes, colorCodes(s.Background, false)...)
+
 	return codes
+}
+
+// boolDiff returns the single on/off SGR code needed for a two-state
+// attribute that changed between prev and next, or nil if it didn't change.
+func boolDiff(prev, next bool, on, off string) []string {
+	switch {
+	case prev == next:
+		return nil
+	case next:
+		return []string{on}
+	default:
+		return []string{off}
+	}
 }
 
 func colorCodes(c Color, foreground bool) []string {

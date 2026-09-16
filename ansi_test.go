@@ -55,6 +55,52 @@ func TestEncodeRoundTripsStyle(t *testing.T) {
 	}
 }
 
+func TestEncodeEmitsMinimalDiff(t *testing.T) {
+	spans := []Span{
+		{Text: "warning", Style: Style{Bold: true, Foreground: Color{Mode: ColorBasic, Index: 1}}},
+		{Text: ": disk full", Style: Style{}},
+	}
+	got := Encode(spans)
+	want := "\x1b[1;31mwarning\x1b[22;39m: disk full"
+	if got != want {
+		t.Errorf("Encode() = %q, want %q", got, want)
+	}
+}
+
+func TestEncodeKeepsFaintWhenBoldTurnsOff(t *testing.T) {
+	spans := []Span{
+		{Text: "a", Style: Style{Bold: true, Faint: true}},
+		{Text: "b", Style: Style{Faint: true}},
+	}
+	got := Encode(spans)
+	want := "\x1b[1;2ma\x1b[22;2mb\x1b[0m"
+	if got != want {
+		t.Errorf("Encode() = %q, want %q", got, want)
+	}
+
+	roundTripped := Decode(got)
+	if len(roundTripped) != len(spans) {
+		t.Fatalf("got %d spans after round trip, want %d: %+v", len(roundTripped), len(spans), roundTripped)
+	}
+	for i := range spans {
+		if roundTripped[i] != spans[i] {
+			t.Errorf("span %d = %+v, want %+v", i, roundTripped[i], spans[i])
+		}
+	}
+}
+
+func TestEncodeOmitsCodesForUnchangedStyle(t *testing.T) {
+	spans := []Span{
+		{Text: "one ", Style: Style{Underline: true}},
+		{Text: "two", Style: Style{Underline: true}},
+	}
+	got := Encode(spans)
+	want := "\x1b[4mone two\x1b[0m"
+	if got != want {
+		t.Errorf("Encode() = %q, want %q", got, want)
+	}
+}
+
 func TestToHTMLEscapesAndStyles(t *testing.T) {
 	spans := Decode("\x1b[1;32mok</script>\x1b[0m")
 	got := ToHTML(spans)
