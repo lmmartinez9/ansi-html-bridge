@@ -76,9 +76,24 @@ That makes each one trivial to unit test in isolation (see
 Markdown code fences with a color legend, or a JSON export - only
 requires a new `func([]Span) string`, not changes to the parser.
 
+## Command line
+
+`cmd/ansihtml` wraps the library for piping logs through it:
+
+```sh
+go run ./cmd/ansihtml < build.log > build.html   # ANSI in, HTML out
+go run ./cmd/ansihtml -pre < build.log > build.html  # wrap output in <pre>
+go run ./cmd/ansihtml -reverse < build.html > build.log  # HTML back to ANSI
+```
+
+It reads all of stdin, converts it, and writes the result to stdout; there's
+no in-place file editing or directory walking, since the point is to sit in
+a shell pipeline next to the tool that produced the colored output.
+
 ## Status
 
 Early skeleton. Decoding, HTML rendering, parsing HTML back into spans,
-and encoding spans back to ANSI (as a minimal diff against the previous
-span's style, not a full reset-and-restyle every time) all work and are
-tested. There's no CLI wrapper yet.
+encoding spans back to ANSI (as a minimal diff against the previous span's
+style, not a full reset-and-restyle every time), and the `ansihtml` CLI
+wrapper all work and are tested (the library, not the CLI itself, which is
+a thin enough wrapper that the library tests cover its logic).
