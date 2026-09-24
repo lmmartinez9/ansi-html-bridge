@@ -110,6 +110,55 @@ func TestToHTMLEscapesAndStyles(t *testing.T) {
 	}
 }
 
+func TestDecodeOSC8Hyperlink(t *testing.T) {
+	spans := Decode("\x1b]8;;https://example.com\x1b\\click here\x1b]8;;\x1b\\ done")
+	if len(spans) != 2 {
+		t.Fatalf("got %d spans, want 2: %#v", len(spans), spans)
+	}
+	if spans[0].Text != "click here" || spans[0].Style.Link != "https://example.com" {
+		t.Errorf("spans[0] = %+v, want text %q with link", spans[0], "click here")
+	}
+	if spans[1].Text != " done" || spans[1].Style.Link != "" {
+		t.Errorf("spans[1] = %+v, want plain trailing text", spans[1])
+	}
+}
+
+func TestDecodeOSC8WithBELTerminator(t *testing.T) {
+	spans := Decode("\x1b]8;;https://example.com\x07link\x1b]8;;\x07")
+	if len(spans) != 1 || spans[0].Text != "link" || spans[0].Style.Link != "https://example.com" {
+		t.Fatalf("got %#v, want a single link span", spans)
+	}
+}
+
+func TestDecodeDropsNonHyperlinkOSC(t *testing.T) {
+	spans := Decode("\x1b]0;window title\x07visible text")
+	if len(spans) != 1 || spans[0].Text != "visible text" {
+		t.Fatalf("got %#v, want the title sequence dropped", spans)
+	}
+}
+
+func TestEncodeRoundTripsHyperlink(t *testing.T) {
+	spans := []Span{
+		{Text: "click here", Style: Style{Bold: true, Link: "https://example.com"}},
+		{Text: " done", Style: Style{}},
+	}
+	got := Encode(spans)
+	want := "\x1b]8;;https://example.com\x1b\\\x1b[1mclick here\x1b]8;;\x1b\\\x1b[22m done"
+	if got != want {
+		t.Errorf("Encode() = %q, want %q", got, want)
+	}
+
+	roundTripped := Decode(got)
+	if len(roundTripped) != len(spans) {
+		t.Fatalf("got %d spans after round trip, want %d: %+v", len(roundTripped), len(spans), roundTripped)
+	}
+	for i := range spans {
+		if roundTripped[i] != spans[i] {
+			t.Errorf("span %d = %+v, want %+v", i, roundTripped[i], spans[i])
+		}
+	}
+}
+
 func TestToHTMLPlainTextHasNoSpan(t *testing.T) {
 	spans := Decode("just text")
 	got := ToHTML(spans)

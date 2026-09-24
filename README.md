@@ -46,10 +46,13 @@ func main() {
 - 256-color palette codes (`38;5;N` / `48;5;N`)
 - 24-bit truecolor codes (`38;2;R;G;B` / `48;2;R;G;B`)
 - reset (SGR 0)
+- OSC 8 hyperlinks (`ESC]8;;URI ST ... ESC]8;;ST`), surfaced as `Style.Link`
+  and rendered as `<a href="...">` by `ToHTML`
 
 Non-SGR control sequences (cursor movement, screen clearing, and similar)
 are recognized and dropped rather than leaking into the output text,
-since the `Span` representation has nowhere to put them.
+since the `Span` representation has nowhere to put them. The same goes
+for OSC sequences other than hyperlinks, such as a terminal window title.
 
 ## Why a `Span` in the middle
 

@@ -8,7 +8,10 @@ import (
 	"unicode/utf8"
 )
 
-const esc = 0x1b
+const (
+	esc = 0x1b
+	bel = 0x07
+)
 
 // ColorMode identifies which of the three ANSI color spaces a Color uses.
 type ColorMode int
@@ -39,6 +42,7 @@ type Style struct {
 	Strikethrough bool
 	Foreground    Color
 	Background    Color
+	Link          string // target URI of an OSC 8 hyperlink, "" if none
 }
 
 // Span is a run of text that shares a single Style. Decode produces spans,
@@ -52,8 +56,11 @@ type Span struct {
 // of styled spans. Non-SGR CSI sequences (cursor movement, screen clearing,
 // and so on) are recognized and discarded rather than leaking into the
 // text, since they carry no style information the intermediate form can
-// represent. Decode never returns an error: malformed or truncated escape
-// sequences are treated as literal text so the function stays total.
+// represent. OSC 8 hyperlinks ("ESC]8;;URI ST ... ESC]8;; ST") are decoded
+// into Style.Link; other OSC sequences (window title and the like) are
+// discarded for the same reason non-SGR CSI sequences are. Decode never
+// returns an error: malformed or truncated escape sequences are treated as
+// literal text so the function stays total.
 func Decode(input string) []Span {
 	var spans []Span
 	style := Style{}
@@ -86,12 +93,54 @@ func Decode(input string) []Span {
 			i = end + 1
 			continue
 		}
+		if input[i] == esc && i+1 < len(input) && input[i+1] == ']' {
+			bodyEnd, next, ok := findOSCEnd(input, i+2)
+			if !ok {
+				text.WriteString(input[i:])
+				break
+			}
+			if uri, ok := parseOSC8(input[i+2 : bodyEnd]); ok {
+				flush()
+				style.Link = uri
+			}
+			i = next
+			continue
+		}
 		r, size := utf8.DecodeRuneInString(input[i:])
 		text.WriteRune(r)
 		i += size
 	}
 	flush()
 	return spans
+}
+
+// findOSCEnd scans input starting at start for an OSC terminator, either a
+// bare BEL or the two-byte ST ("ESC \"). It returns the index the OSC body
+// ends at (exclusive) and the index to resume scanning from, or ok=false if
+// the sequence runs off the end of input unterminated.
+func findOSCEnd(input string, start int) (bodyEnd, next int, ok bool) {
+	for j := start; j < len(input); j++ {
+		switch {
+		case input[j] == bel:
+			return j, j + 1, true
+		case input[j] == esc && j+1 < len(input) && input[j+1] == '\\':
+			return j, j + 2, true
+		}
+	}
+	return 0, 0, false
+}
+
+// parseOSC8 reads the body of an OSC sequence (without the leading "ESC]"
+// or trailing terminator) and, if it is an OSC 8 hyperlink ("8;params;URI"),
+// returns the URI. An empty URI closes the current link, matching how
+// terminals emit "ESC]8;;ST" to end a hyperlink run.
+func parseOSC8(body string) (uri string, ok bool) {
+	rest, ok := strings.CutPrefix(body, "8;")
+	if !ok {
+		return "", false
+	}
+	_, uri, ok = strings.Cut(rest, ";")
+	return uri, ok
 }
 
 func isFinalByte(b byte) bool {
@@ -214,6 +263,9 @@ func Encode(spans []Span) string {
 	var b strings.Builder
 	prev := Style{}
 	for _, span := range spans {
+		if span.Style.Link != prev.Link {
+			writeOSC8(&b, span.Style.Link)
+		}
 		codes := diffSGR(prev, span.Style)
 		if len(codes) > 0 {
 			b.WriteString("\x1b[")
@@ -223,10 +275,21 @@ func Encode(spans []Span) string {
 		b.WriteString(span.Text)
 		prev = span.Style
 	}
+	if prev.Link != "" {
+		writeOSC8(&b, "")
+	}
 	if prev != (Style{}) {
 		b.WriteString("\x1b[0m")
 	}
 	return b.String()
+}
+
+// writeOSC8 emits an OSC 8 hyperlink escape targeting uri, or one that
+// closes the current link if uri is empty.
+func writeOSC8(b *strings.Builder, uri string) {
+	b.WriteString("\x1b]8;;")
+	b.WriteString(uri)
+	b.WriteString("\x1b\\")
 }
 
 // diffSGR returns the SGR codes that take the terminal from prev's style to

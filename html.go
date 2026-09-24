@@ -59,23 +59,37 @@ func cubeLevel(n int) int {
 }
 
 // ToHTML renders spans as HTML, one <span> per styled run with an inline
-// style attribute. Plain (unstyled) spans are emitted as bare escaped
-// text. Newlines become <br> so the result is ready to drop into a <pre>
-// or <div> without further processing.
+// style attribute (or an <a href="..."> for a span with a Link, styled the
+// same way). Plain (unstyled) spans are emitted as bare escaped text.
+// Newlines become <br> so the result is ready to drop into a <pre> or <div>
+// without further processing.
 func ToHTML(spans []Span) string {
 	var b strings.Builder
 	for _, span := range spans {
 		text := strings.ReplaceAll(html.EscapeString(span.Text), "\n", "<br>\n")
 		css := cssFor(span.Style)
-		if css == "" {
+		switch {
+		case span.Style.Link != "":
+			b.WriteString(`<a href="`)
+			b.WriteString(html.EscapeString(span.Style.Link))
+			b.WriteString(`"`)
+			if css != "" {
+				b.WriteString(` style="`)
+				b.WriteString(css)
+				b.WriteString(`"`)
+			}
+			b.WriteString(`>`)
 			b.WriteString(text)
-			continue
+			b.WriteString(`</a>`)
+		case css == "":
+			b.WriteString(text)
+		default:
+			b.WriteString(`<span style="`)
+			b.WriteString(css)
+			b.WriteString(`">`)
+			b.WriteString(text)
+			b.WriteString(`</span>`)
 		}
-		b.WriteString(`<span style="`)
-		b.WriteString(css)
-		b.WriteString(`">`)
-		b.WriteString(text)
-		b.WriteString(`</span>`)
 	}
 	return b.String()
 }
@@ -118,10 +132,10 @@ func cssFor(s Style) string {
 }
 
 // HTMLToSpans is the inverse of ToHTML: it parses HTML of the form ToHTML
-// produces (bare text, "<br>" line breaks, and "<span style=\"...\">" runs)
-// back into spans. It only understands that specific shape, not arbitrary
-// HTML, since its job is to close the loop on ToHTML's own output rather
-// than to be a general-purpose parser.
+// produces (bare text, "<br>" line breaks, "<span style=\"...\">" runs, and
+// "<a href=\"...\">" runs) back into spans. It only understands that
+// specific shape, not arbitrary HTML, since its job is to close the loop on
+// ToHTML's own output rather than to be a general-purpose parser.
 //
 // Color is lossy in the round trip: CSS has no notion of ANSI's basic,
 // 256-color, and truecolor spaces, so every parsed color comes back as
@@ -173,7 +187,10 @@ func HTMLToSpans(s string) []Span {
 		case strings.HasPrefix(lower, "<span"):
 			flush()
 			style = parseStyleAttr(tag)
-		case lower == "</span>":
+		case strings.HasPrefix(lower, "<a "):
+			flush()
+			style = parseAnchorAttr(tag)
+		case lower == "</span>" || lower == "</a>":
 			flush()
 			style = Style{}
 		}
@@ -182,24 +199,35 @@ func HTMLToSpans(s string) []Span {
 	return spans
 }
 
-// parseStyleAttr reads the style="..." attribute out of a "<span ...>"
-// start tag and turns the declarations cssFor is known to emit back into a
-// Style.
-func parseStyleAttr(tag string) Style {
-	var style Style
-
-	const key = `style="`
+// extractAttr reads the value of the named attribute out of a start tag,
+// e.g. extractAttr(`<a href="x">`, "href") returns "x". It returns "" if
+// the attribute isn't present.
+func extractAttr(tag, name string) string {
+	key := name + `="`
 	idx := strings.Index(tag, key)
 	if idx == -1 {
-		return style
+		return ""
 	}
 	rest := tag[idx+len(key):]
 	end := strings.IndexByte(rest, '"')
 	if end == -1 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// parseStyleAttr reads the style="..." attribute out of a "<span ...>" or
+// "<a ...>" start tag and turns the declarations cssFor is known to emit
+// back into a Style.
+func parseStyleAttr(tag string) Style {
+	var style Style
+
+	styleVal := extractAttr(tag, "style")
+	if styleVal == "" {
 		return style
 	}
 
-	for _, decl := range strings.Split(rest[:end], ";") {
+	for _, decl := range strings.Split(styleVal, ";") {
 		prop, val, ok := strings.Cut(strings.TrimSpace(decl), ":")
 		if !ok {
 			continue
@@ -227,6 +255,14 @@ func parseStyleAttr(tag string) Style {
 			style.Background = parseHexColor(val)
 		}
 	}
+	return style
+}
+
+// parseAnchorAttr reads the href="..." attribute out of a "<a ...>" start
+// tag into Style.Link, along with any style="..." attribute alongside it.
+func parseAnchorAttr(tag string) Style {
+	style := parseStyleAttr(tag)
+	style.Link = html.UnescapeString(extractAttr(tag, "href"))
 	return style
 }
 
